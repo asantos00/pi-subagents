@@ -159,9 +159,6 @@ function validateConfig(config: Record<string, unknown>): void {
 	if (config.worktree !== undefined && typeof config.worktree !== "boolean") {
 		throw new Error("config.worktree must be a boolean");
 	}
-	if (config.preferHerdrPlacement !== undefined && typeof config.preferHerdrPlacement !== "boolean") {
-		throw new Error("config.preferHerdrPlacement must be a boolean");
-	}
 	if (config.worktreeProvider !== undefined && config.worktreeProvider !== "auto" && config.worktreeProvider !== "native" && config.worktreeProvider !== "worktrunk") {
 		throw new Error('config.worktreeProvider must be "auto", "native", or "worktrunk"');
 	}

@@ -1526,7 +1526,6 @@ function appendStepToAsyncChain(input: {
 		validateOutputBindings: false,
 		capabilityCeiling: intersectSubagentCapabilityCeilings(status.capabilityCeiling, resolveCurrentSubagentCapabilityCeiling(asyncCtx.parentSessionId)),
 		requiredExtensions: retainedRequiredExtensions,
-		preferHerdrPlacement: input.deps.config.preferHerdrPlacement,
 	}));
 	if ("error" in built) {
 		return {
@@ -2247,7 +2246,6 @@ async function resumeAsyncRun(input: {
 			chain,
 			task: workflowTask,
 			goal,
-			preferHerdrPlacement: input.deps.config.preferHerdrPlacement,
 			attachRoot: {
 				runId: target.runId,
 				asyncDir: target.asyncDir ?? path.join(DIRS.async, target.runId),
@@ -3755,7 +3753,6 @@ async function runAsyncPath(data: ExecutionContextData, deps: ExecutorDeps): Pro
 			cwd: effectiveCwd,
 			requestedCwd: data.requestedCwd,
 			machine: params.machine,
-			preferHerdrPlacement: deps.config.preferHerdrPlacement,
 			machineCwd: params.machineCwd,
 			requireLauncher: params.requireLauncher,
 			maxOutput: params.maxOutput,

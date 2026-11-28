@@ -4,17 +4,11 @@
 
 Settings-level keys (`subagents.defaultModel`, `defaultProvider`, `defaultThinking`, `defaultExtensions`, `defaultSubagentOnlyExtensions`, `defaultInheritGlobalContext`, `agentOverrides`, `machines`, `agentScanDirs`, `agentExcludeDirs`, `modelScope`, `disableThinking`, `disableBuiltins`, watchdog settings) live in Pi settings files, not this config file. `modelScope.agents.<name>` adds per-agent restrictions, `allow: ["inherit"]` permits the current parent model, and `allow: ["scoped"]` permits the parent session's scoped models (the parent model when the session is unscoped). See [models.md](models.md), [agents.md](agents.md), and [watchdog.md](watchdog.md).
 
-## Prefer compatible background children in Herdr
+## Automatic placement adapters
 
-Set `preferHerdrPlacement` in `~/.pi/agent/extensions/subagent/config.json` to make a compatible unplaced background Pi child use `machine: "local"` automatically when its parent runs in Herdr:
+Compatible unplaced background Pi children automatically use the execution host that owns their parent terminal. Built-in adapters currently recognize legacy Herdr, Herdr Core, and Rex; no extension setting is required. An explicit `machine` always wins.
 
-```json
-{
-  "preferHerdrPlacement": true
-}
-```
-
-This is a soft preference. An explicit `machine` still wins, and a child stays in the normal local runner when placement cannot preserve its requested capabilities, including a foreground session, runtime-registered or user-only agent definition, private skill path, managed worktree, forked or nested context, external runner, launcher, extensions, permission or tool budget, MCP tools, structured output, or fast service tier. Foreground children remain unplaced because they intentionally omit ambient extensions while a placed Pi process loads them. Outside Herdr the setting changes nothing. See [running a Pi child on this machine](agents.md#running-a-pi-child-on-this-machine-herdr-core-rex-or-legacy-herdr).
+A child stays in the normal local runner when no adapter is present or placement cannot preserve its requested capabilities, including a foreground session, runtime-registered or user-only agent definition, private skill path, managed worktree, forked or nested context, external runner, launcher, extensions, permission or tool budget, MCP tools, structured output, or fast service tier. Adapter detection and placement failures also fall back to normal execution. Foreground children remain unplaced because they intentionally omit ambient extensions while a placed Pi process loads them. See [running a Pi child on this machine](agents.md#running-a-pi-child-on-this-machine-herdr-core-rex-or-legacy-herdr).
 
 ## Project root resolution (settings)
 

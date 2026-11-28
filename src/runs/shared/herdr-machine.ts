@@ -1,12 +1,11 @@
 import { spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import type { AgentConfig } from "../../agents/agents.ts";
 import type { ExternalProcessStatus, HerdrCoreLocalMachineReference, HerdrLocalMachineReference, HerdrMachineReference, PlacementMachineReference } from "../../shared/types.ts";
 import { getAgentDir, getProjectConfigDir } from "../../shared/utils.ts";
 import { CODE_OWNED_EXTERNAL_CLI_ADAPTER_IDS } from "./external-cli-contract.ts";
+import type { AmbientPlacementAdapterId } from "./ambient-placement.ts";
 import type { runExternalCli } from "./external-cli-runner.ts";
-import { isToolExtensionPath } from "./child-tool-plan.ts";
 import { herdrLocalEnv, parseHerdrEndpoint } from "./herdr-connection.ts";
 import { REX_LOCAL_MACHINE, resolveLocalLaunchCwd, resolveRexLocalPlacement } from "./rex-machine.ts";
 export { shellQuoteRemote as shellQuote } from "./herdr-connection.ts";
@@ -57,30 +56,11 @@ export interface ResolveHerdrMachinePlacementInput {
 	settings?: MachineSettingsEntry;
 	herdrBin?: string;
 	hcBin?: string;
+	/** Internal: ambient adapter selected automatically; explicit `machine: "local"` keeps normal precedence. */
+	ambientAdapter?: AmbientPlacementAdapterId;
 }
 
 export interface HerdrMachinePlacement extends MachinePlacement { machine: HerdrMachineReference }
-
-/** Agent-definition capabilities that the pane-native Pi transport cannot preserve. */
-export function supportsPreferredHerdrAgent(agent: Pick<AgentConfig, "source" | "runner" | "tools" | "skillPath" | "outputSchema" | "toolBudget" | "permissions" | "extensions" | "subagentOnlyExtensions" | "excludeTools" | "mcpDirectTools" | "allowNestedSubagents" | "allowedAgents" | "launcher">): boolean {
-	return agent.source !== "runtime" && agent.source !== "user" && (agent.runner === undefined || agent.runner.type === "pi")
-		&& agent.outputSchema === undefined && agent.toolBudget === undefined && agent.permissions === undefined
-		&& agent.extensions === undefined && !agent.subagentOnlyExtensions?.length && !agent.excludeTools?.length && !agent.mcpDirectTools?.length
-		&& !agent.tools?.includes("subagent") && !agent.tools?.some(isToolExtensionPath) && !agent.skillPath?.length
-		&& !agent.allowNestedSubagents && !agent.allowedAgents?.length && !agent.launcher;
-}
-
-/** Applies the operator's soft Herdr preference without overriding an explicit machine or evaluating incompatible-run policy off the Herdr path. */
-export function resolvePreferredHerdrMachine(input: { requested?: string; enabled?: boolean; compatible(): boolean; env?: NodeJS.ProcessEnv }): string | undefined {
-	if (input.requested !== undefined) return input.requested;
-	if (!input.enabled) return undefined;
-	const env = input.env ?? process.env;
-	const coreSocket = env.HC_TERMINAL_SOCKET?.trim();
-	const inCore = Boolean(env.HC_TERMINAL_ID?.trim() && coreSocket && path.isAbsolute(coreSocket));
-	const inLegacyHerdr = env.HERDR_ENV === "1" && Boolean(env.HERDR_PANE_ID?.trim());
-	if (!inCore && !inLegacyHerdr) return undefined;
-	return input.compatible() ? REX_LOCAL_MACHINE : undefined;
-}
 
 /** A resolved `machine` value: a Herdr saved machine, a Rex SSH host, or the reserved `local` (a child of the Herdr, Herdr Core or Rex terminal this Pi runs in). */
 export interface MachinePlacement {
@@ -309,7 +289,10 @@ export function resolveMachinePlacement(input: ResolveHerdrMachinePlacementInput
 	if (requested === REX_LOCAL_MACHINE) {
 		if (settings?.rex) throw new Error("Machine 'local' is reserved for this machine; give the Rex SSH host in subagents.machines.local.rex another name.");
 		const env = input.env ?? process.env;
-		// Herdr panes and Herdr Core terminals can inherit REX_SESSION; the runtime that directly owns this Pi wins over Rex.
+		if (input.ambientAdapter === "herdr") return { machine: resolveHerdrLocalPlacement({ cwd: input.cwd, stepCwd: input.stepCwd, env, herdrBin: input.herdrBin }) };
+		if (input.ambientAdapter === "herdr-core") return { machine: resolveHerdrCoreLocalPlacement({ cwd: input.cwd, stepCwd: input.stepCwd, env, hcBin: input.hcBin }) };
+		if (input.ambientAdapter === "rex") return { machine: resolveRexLocalPlacement({ cwd: input.cwd, stepCwd: input.stepCwd, env }) };
+		// Explicit `machine: "local"` preserves the established host precedence.
 		if (env.HERDR_ENV === "1" && env.HERDR_PANE_ID?.trim()) return { machine: resolveHerdrLocalPlacement({ cwd: input.cwd, stepCwd: input.stepCwd, env, herdrBin: input.herdrBin }) };
 		if (env.HC_TERMINAL_ID?.trim()) return { machine: resolveHerdrCoreLocalPlacement({ cwd: input.cwd, stepCwd: input.stepCwd, env, hcBin: input.hcBin }) };
 		if (env.REX_SESSION?.trim()) return { machine: resolveRexLocalPlacement({ cwd: input.cwd, stepCwd: input.stepCwd, env }) };

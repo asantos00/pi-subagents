@@ -137,6 +137,11 @@ describe("machine 'local' resolution", { skip: process.platform === "win32" }, (
 		assert.equal(fs.readFileSync(path.join(dir, "selectors"), "utf8").trim(), "unset unset unset");
 	});
 
+	it("honors the automatically selected Rex adapter despite stale higher-priority host variables", () => {
+		const placement = resolveMachinePlacement({ machine: "local", ambientAdapter: "rex", cwd: dir, stepCwd: "repo", env: { ...insideRex, HERDR_ENV: "1", HERDR_PANE_ID: "stale-pane", HC_TERMINAL_ID: "stale-terminal" } });
+		assert.deepEqual(placement, { machine: { provider: "rex", id: "local", session, server: "unix:///tmp/fake-rex.sock", cwd: path.join(dir, "repo") } });
+	});
+
 	it("fails closed outside Rex, for a session the server does not know, and when the server is unreachable", () => {
 		assert.throws(() => resolveMachinePlacement({ machine: "local", cwd: dir, env: parentEnv() }), /running in neither Herdr \(HERDR_ENV=1 with HERDR_PANE_ID\), Herdr Core \(HC_TERMINAL_ID\), nor Rex/u);
 		assert.equal(fs.existsSync(path.join(dir, "calls")), false);

@@ -12,7 +12,8 @@ import { childCacheRetentionEnv } from "../../shared/child-cache-retention.ts";
 import { buildEffectiveSystemPrompt } from "../shared/effective-system-prompt.ts";
 import { currentCompletionOwnerId } from "../../shared/completion-owner.ts";
 import { planChildLaunch, projectChainOutputSchemas, resolveStepBehavior, suppressProgressForReadOnlyTask, type ResolvedStepBehavior } from "../shared/child-launch-plan.ts";
-import { formatHerdrMachineRunnerUnsupported, PLACED_RESTORE_UNSUPPORTED, resolveMachinePlacement, resolvePreferredHerdrMachine, supportsPreferredHerdrAgent } from "../shared/herdr-machine.ts";
+import { resolveAmbientPlacement, supportsAmbientPlacementAgent } from "../shared/ambient-placement.ts";
+import { formatHerdrMachineRunnerUnsupported, PLACED_RESTORE_UNSUPPORTED, resolveMachinePlacement } from "../shared/herdr-machine.ts";
 import { applyThinkingSuffix, projectLaunchResolvedChildExtensions, resolvePiLaunchToolPlan } from "../shared/child-tool-plan.ts";
 import { assertClaudeCodeModelScope, isClaudeCodeAdapterId, resolveClaudeCodeOverride, type ClaudeCodeOverride } from "../shared/claude-code-adapter.ts";
 import { injectSingleOutputInstruction, normalizeSingleOutputOverride, resolveSingleOutputPath, validateFileOnlyOutputMode } from "../shared/single-output.ts";
@@ -223,7 +224,6 @@ interface AsyncChainParams {
 	cwd?: string;
 	maxOutput?: MaxOutputConfig;
 	machine?: string;
-	preferHerdrPlacement?: boolean;
 	/** Launch cwd as typed when a machine is set: a path on that machine, never resolved locally. */
 	machineCwd?: string;
 	artifactsDir?: string;
@@ -288,7 +288,6 @@ interface AsyncSingleParams {
 	cwd?: string;
 	requestedCwd?: string;
 	machine?: string;
-	preferHerdrPlacement?: boolean;
 	/** Launch cwd as typed when a machine is set: a path on that machine, never resolved locally. */
 	machineCwd?: string;
 	/** The launcher and agent definition digest the call requires; checked here, on what this launch spawns. */
@@ -384,7 +383,6 @@ export interface AsyncRunnerStepBuildParams {
 	availableModels?: AvailableModelInfo[];
 	cwd?: string;
 	machine?: string;
-	preferHerdrPlacement?: boolean;
 	machineCwd?: string;
 	chainSkills?: string[];
 	sessionFilesByFlatIndex?: (string | undefined)[];
@@ -1112,10 +1110,9 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 		const externalRunnerType = a.runner?.type;
 		const registeredExtensions = resolveRequiredChildExtensions(ctx.parentSessionId ?? ctx.currentSessionId ?? undefined);
 		const configuredMachine = s.machine ?? launchMachine ?? a.machine;
-		const requestedMachine = resolvePreferredHerdrMachine({
+		const placementSelection = resolveAmbientPlacement({
 			requested: configuredMachine,
-			enabled: params.preferHerdrPlacement,
-			compatible: () => supportsPreferredHerdrAgent(a)
+			compatible: () => supportsAmbientPlacementAgent(a)
 				&& s.worktree !== true && params.contextForAgent?.(a.name) !== "fork"
 				&& effectiveBehavior.outputSchema === undefined
 				&& s.toolBudget === undefined && params.toolBudget === undefined && params.configToolBudget === undefined
@@ -1123,6 +1120,7 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 				&& !(params.requiredExtensions?.length || ctx.childRuntime?.requiredExtensions?.length || registeredExtensions.length)
 				&& !ctx.childRuntime && (s.fast ?? params.fast ?? a.fast) !== true,
 		});
+		const requestedMachine = placementSelection?.machine;
 		const machineUnsupported = formatHerdrMachineRunnerUnsupported({ machine: requestedMachine, agentName: a.name, runnerType: a.runner?.type, adapter: a.runner?.type === "external-cli" ? a.runner.adapter : undefined, worktree: s.worktree });
 		if (machineUnsupported) throw new AsyncStartValidationError(machineUnsupported);
 		const launcherError = runnerLauncherPlacementError(a, requestedMachine);
@@ -1136,12 +1134,12 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 		let machineEnv: Record<string, string> | undefined;
 		if (requestedMachine) {
 			try {
-				const placement = resolveMachinePlacement({ machine: requestedMachine, cwd: runnerCwd, stepCwd: s.cwd ?? params.machineCwd });
+				const placement = resolveMachinePlacement({ machine: requestedMachine, cwd: runnerCwd, stepCwd: s.cwd ?? params.machineCwd, ambientAdapter: placementSelection?.adapter });
 				machine = placement.machine;
 				machineEnv = placement.env;
 			} catch (error) {
 				if (configuredMachine !== undefined) throw new AsyncStartValidationError(error instanceof Error ? error.message : String(error));
-				// A soft preference must not turn stale or incomplete Herdr state into a failed normal launch.
+				// Ambient adapter failures fall back to the normal runner; explicit machines fail closed.
 			}
 		}
 		// A code-owned Claude Code adapter owns its argv, but it does accept an explicit
@@ -1586,7 +1584,6 @@ export function executeAsyncChain(
 		cwd,
 		chainSkills: params.chainSkills,
 		machine: params.machine,
-		preferHerdrPlacement: params.preferHerdrPlacement,
 		machineCwd: params.machineCwd,
 		sessionFilesByFlatIndex,
 		thinkingOverridesByFlatIndex,
@@ -1946,10 +1943,9 @@ export function executeAsyncSingle(
 	const runnerCwd = resolveChildCwd(ctx.cwd, cwd);
 	const registeredExtensions = resolveRequiredChildExtensions(ctx.parentSessionId ?? ctx.currentSessionId ?? undefined);
 	const configuredMachine = params.machine ?? agentConfig.machine;
-	const requestedMachine = resolvePreferredHerdrMachine({
+	const placementSelection = resolveAmbientPlacement({
 		requested: configuredMachine,
-		enabled: params.preferHerdrPlacement,
-		compatible: () => supportsPreferredHerdrAgent(agentConfig)
+		compatible: () => supportsAmbientPlacementAgent(agentConfig)
 			&& params.worktree !== true && !params.revivalLease && params.context !== "fork"
 			&& params.structuredOutputSchema === undefined
 			&& params.toolBudget === undefined && params.configToolBudget === undefined
@@ -1957,6 +1953,7 @@ export function executeAsyncSingle(
 			&& !(params.requiredExtensions?.length || ctx.childRuntime?.requiredExtensions?.length || registeredExtensions.length)
 			&& !ctx.childRuntime && (params.fast ?? agentConfig.fast) !== true,
 	});
+	const requestedMachine = placementSelection?.machine;
 	const machineUnsupported = formatHerdrMachineRunnerUnsupported({ machine: requestedMachine, agentName: agentConfig.name, runnerType: agentConfig.runner?.type, adapter: agentConfig.runner?.type === "external-cli" ? agentConfig.runner.adapter : undefined, worktree: params.worktree });
 	if (machineUnsupported) return formatAsyncStartError("single", machineUnsupported);
 	// Refuse before the runner starts; the placed launch would refuse only after the run exists.
@@ -1979,12 +1976,12 @@ export function executeAsyncSingle(
 	let machineEnv: Record<string, string> | undefined;
 	if (requestedMachine) {
 		try {
-			const placement = resolveMachinePlacement({ machine: requestedMachine, cwd: runnerCwd, stepCwd: params.machineCwd });
+			const placement = resolveMachinePlacement({ machine: requestedMachine, cwd: runnerCwd, stepCwd: params.machineCwd, ambientAdapter: placementSelection?.adapter });
 			machine = placement.machine;
 			machineEnv = placement.env;
 		} catch (error) {
 			if (configuredMachine !== undefined) return formatAsyncStartError("single", error instanceof Error ? error.message : String(error));
-			// A soft preference must not turn stale or incomplete Herdr state into a failed normal launch.
+			// Ambient adapter failures fall back to the normal runner; explicit machines fail closed.
 		}
 	}
 	let managedWorktreeProvider: "native" | "worktrunk" | undefined;
